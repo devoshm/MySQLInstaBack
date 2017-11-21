@@ -1,45 +1,35 @@
 package connectors;
 
 import back.IBConstants;
+import com.datastax.driver.core.ResultSet;
+import com.datastax.driver.core.Row;
 
 import java.io.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 public class MySQLConnect
 {
-    public static void makeInitialBackup(Map<String, Object> connectionDetails) throws Exception
+    private String host;
+    private int port;
+    private String userName;
+    private String password;
+    private List<String> schemaNames;
+
+    public MySQLConnect(Map<String, Object> connectionDetails)
     {
-        StringBuilder dumpQuery = new StringBuilder();
-        if (connectionDetails.containsKey(IBConstants.DB_NAMES))
-        {
-            dumpQuery.append("--databases");
-            List<String> schemas = (List<String>) connectionDetails.get(IBConstants.DB_NAMES);
-            for (String schema : schemas)
-            {
-                dumpQuery.append(" ");
-                dumpQuery.append(schema);
-            }
-        }
-        else
-        {
-            dumpQuery.append("--all-databases");
-        }
-
-        long currentTime = System.currentTimeMillis();
-        String fileName = "backup_" + currentTime + ".sql";
-        dumpQuery.append(" > sql_dumps\\");
-        dumpQuery.append(fileName);
-
-        backupOrRestore(connectionDetails, "mysqldump", dumpQuery.toString());
-
-        System.out.println("Snapshot created in " + fileName);
-        FileWriter f2 = new FileWriter(new File("sql_dumps/backup_config.txt"), false);
-        f2.write(fileName);
-        f2.close();
+        this.host = (String) connectionDetails.get(IBConstants.HOST);
+        this.port = (int) connectionDetails.get(IBConstants.PORT);
+        this.userName = (String) connectionDetails.get(IBConstants.USERNAME);
+        this.password = (String) connectionDetails.get(IBConstants.PASSWORD);
+        this.schemaNames = (List<String>) connectionDetails.getOrDefault(IBConstants.DB_NAMES, new ArrayList<>());
     }
 
-    public static void initiateRestore(Map<String, Object> connectionDetails, long timeStamp) throws Exception
+    public void initiateRestore(long timeStamp, String... dbNames) throws Exception
     {
         String cmd = "mysql";
         File file = new File("sql_dumps/backup_config.txt");
@@ -60,28 +50,86 @@ public class MySQLConnect
         }
 
         String restoreFile = " < sql_dumps\\" + line;
-        if (connectionDetails.containsKey(IBConstants.DB_NAMES))
+        if (dbNames.length > 0)
         {
-            List<String> schemas = (List<String>) connectionDetails.get(IBConstants.DB_NAMES);
-            for (String schema : schemas)
+            for (String schema : dbNames)
             {
+                if (!schemaNames.contains(schema))
+                {
+                    System.out.println("The schema " + schema + " is not found in backup list. Proceeding to the next.");
+                    continue;
+                }
+
                 String dumpQuery = "--one-database " + schema + restoreFile;
-                backupOrRestore(connectionDetails, cmd, dumpQuery);
+                backupOrRestore(cmd, dumpQuery);
             }
         }
         else
         {
-            backupOrRestore(connectionDetails, cmd, restoreFile);
+            backupOrRestore(cmd, restoreFile);
         }
 
         System.out.println("Snapshot Restored!");
     }
 
-    private static void backupOrRestore(Map<String, Object> connectionDetails, String command, String placeholder) throws Exception
+    public void runRestoreQueries(ResultSet restoreQueries) throws Exception
     {
-        String dumpQuery = "cmd.exe /c \"C:\\Program Files\\MariaDB 10.2\\bin\\%s\" -u" + connectionDetails.get(IBConstants.USERNAME) +
+        Connection con = DriverManager.getConnection("jdbc:mysql://" + host + ":" + port, userName, password);
+        Statement stmt = con.createStatement();
+        String currentSchema = null;
+
+        System.out.println("Running Restore Queries..!");
+        for (Row row : restoreQueries)
+        {
+            System.out.println(row);
+            String schema = row.getString("SchemaName");
+            if (!schema.equalsIgnoreCase(currentSchema))
+            {
+                currentSchema = schema;
+                con.setCatalog(currentSchema);
+                stmt = con.createStatement();
+            }
+            stmt.executeUpdate(row.getString("Query"));
+        }
+        con.close();
+        System.out.println("Restore Completed!");
+    }
+
+    public void makeInitialBackup() throws Exception
+    {
+        StringBuilder dumpQuery = new StringBuilder();
+        if (schemaNames.isEmpty())
+        {
+            dumpQuery.append("--all-databases");
+        }
+        else
+        {
+            dumpQuery.append("--databases");
+            for (String schema : schemaNames)
+            {
+                dumpQuery.append(" ");
+                dumpQuery.append(schema);
+            }
+        }
+
+        long currentTime = System.currentTimeMillis();
+        String fileName = "backup_" + currentTime + ".sql";
+        dumpQuery.append(" > sql_dumps\\");
+        dumpQuery.append(fileName);
+
+        backupOrRestore("mysqldump", dumpQuery.toString());
+
+        System.out.println("Snapshot created in " + fileName);
+        FileWriter f2 = new FileWriter(new File("sql_dumps/backup_config.txt"), false);
+        f2.write(fileName);
+        f2.close();
+    }
+
+    private void backupOrRestore(String command, String placeholder) throws Exception
+    {
+        String dumpQuery = "cmd.exe /c \"C:\\Program Files\\MariaDB 10.2\\bin\\%s\" -u" + userName +
                 " -p" +
-                connectionDetails.get(IBConstants.PASSWORD) +
+                password +
                 " %s";
 
         String sqlCommand = String.format(dumpQuery, command, placeholder);

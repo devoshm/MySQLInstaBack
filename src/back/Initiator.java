@@ -1,5 +1,6 @@
 package back;
 
+import com.datastax.driver.core.ResultSet;
 import connectors.BinlogConnect;
 import connectors.MySQLConnect;
 import org.yaml.snakeyaml.Yaml;
@@ -11,7 +12,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Scanner;
 
-public class InitiateBackup
+public class Initiator
 {
     private static Map<String, Map<String, Object>> connectionDetails = new HashMap<>();
     private static Scanner scanner = new Scanner(System.in);
@@ -21,7 +22,7 @@ public class InitiateBackup
         try
         {
             readConfigs();
-            System.out.println("Welcome to Insta Backup!\nPlease select an option below:\n1. Backup\n2. Restore\nEnter your choice: ");
+            System.out.print("Welcome to Insta Backup!\nPlease select an option below:\n1. Backup\n2. Restore\nEnter your choice: ");
             int opt = scanner.nextInt();
             switch (opt)
             {
@@ -54,7 +55,8 @@ public class InitiateBackup
                 throw new IOException("Unable to create directory!");
             }
         }
-        MySQLConnect.makeInitialBackup(connectionDetails.get(IBConstants.MY_SQL));
+        MySQLConnect mySQLConnect = new MySQLConnect(connectionDetails.get(IBConstants.MY_SQL));
+        mySQLConnect.makeInitialBackup();
 
         Thread threadBinlog = new Thread(() -> {
             try
@@ -68,18 +70,47 @@ public class InitiateBackup
         threadBinlog.start();
 
         Thread threadCassandra = new Thread(() -> {
-            PushToCassandra.initializeCassandra(connectionDetails.get(IBConstants.CASSANDRA));
-            PushToCassandra.getDataFromQueue();
+            CassandraPushOrPop cassandraPushOrPop = null;
+            try
+            {
+                cassandraPushOrPop = new CassandraPushOrPop(connectionDetails.get(IBConstants.CASSANDRA));
+                cassandraPushOrPop.initializeCassandra(connectionDetails.get(IBConstants.CASSANDRA));
+                cassandraPushOrPop.pushDataToCluster();
+            }
+            finally
+            {
+                if (cassandraPushOrPop != null)
+                {
+                    cassandraPushOrPop.closeConnection();
+                }
+            }
         });
         threadCassandra.start();
     }
 
     private static void initiateRestore() throws Exception
     {
-        System.out.println("Enter timestamp up to which you want to initiate restore: ");
+        System.out.print("Enter timestamp up to which you want to initiate restore: ");
         long timestamp = scanner.nextLong();
-        MySQLConnect.initiateRestore(connectionDetails.get(IBConstants.MY_SQL), timestamp);
+        MySQLConnect mySQLConnect = new MySQLConnect(connectionDetails.get(IBConstants.MY_SQL));
+        CassandraPushOrPop cassandraPushOrPop = new CassandraPushOrPop(connectionDetails.get(IBConstants.CASSANDRA));
+        System.out.print("Do you want to restore all the databases(1) or only a few (2)?");
 
+        switch (scanner.nextInt())
+        {
+            case 1:
+                mySQLConnect.initiateRestore(timestamp);
+                ResultSet resultSet = cassandraPushOrPop.getQueriesTillRestorePoint(timestamp);
+                mySQLConnect.runRestoreQueries(resultSet);
+                break;
+            case 2:
+                System.out.print("Enter the database names separated by comma: ");
+                String[] dbNames = scanner.next().split(",");
+                mySQLConnect.initiateRestore(timestamp, dbNames);
+                cassandraPushOrPop.getQueriesTillRestorePoint(timestamp, dbNames);
+                break;
+        }
+        cassandraPushOrPop.closeConnection();
     }
 
     private static void readConfigs() throws IOException
