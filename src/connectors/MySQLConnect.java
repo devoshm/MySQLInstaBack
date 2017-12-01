@@ -8,9 +8,7 @@ import java.io.*;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.Statement;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 public class MySQLConnect
 {
@@ -72,24 +70,55 @@ public class MySQLConnect
         System.out.println("Snapshot Restored!");
     }
 
+    private Map<Long, String> getQueriesInOrder(ResultSet restoreQueries)
+    {
+        Map<Long, String> queryMap = new TreeMap<>();
+
+        long size = 0L;
+        for (Row row : restoreQueries)
+        {
+            size++;
+            System.out.println(row);
+            String dbNameWithQuery = row.getString("SchemaName") + IBConstants.RESTORE_DELIMITER + row.getString("Query");
+            queryMap.put(row.getLong("Timestamp"), dbNameWithQuery);
+        }
+
+        if (size != queryMap.size())
+        {
+            throw new IllegalStateException("Difference in restored and sorted queries size!");
+        }
+
+        return queryMap;
+    }
+
     public void runRestoreQueries(ResultSet restoreQueries) throws Exception
     {
+        Map<Long, String> orderedQueries = getQueriesInOrder(restoreQueries);
+
         Connection con = DriverManager.getConnection("jdbc:mysql://" + host + ":" + port, userName, password);
         Statement stmt = con.createStatement();
         String currentSchema = null;
 
         System.out.println("Running Restore Queries..!");
-        for (Row row : restoreQueries)
+        long prevTimeStamp = -1L, currTimeStamp;
+        for (Map.Entry<Long, String> mapEntry : orderedQueries.entrySet())
         {
-            System.out.println(row);
-            String schema = row.getString("SchemaName");
+            System.out.println(mapEntry);
+            currTimeStamp = mapEntry.getKey();
+            if (currTimeStamp < prevTimeStamp)
+            {
+                throw new IllegalStateException("Order mismatch!");
+            }
+            prevTimeStamp = currTimeStamp;
+
+            String schema = mapEntry.getValue().split(IBConstants.RESTORE_DELIMITER)[0];
             if (!schema.equalsIgnoreCase(currentSchema))
             {
                 currentSchema = schema;
                 con.setCatalog(currentSchema);
                 stmt = con.createStatement();
             }
-            stmt.executeUpdate(row.getString("Query"));
+            stmt.executeUpdate(mapEntry.getValue().split(IBConstants.RESTORE_DELIMITER)[1]);
         }
         con.close();
         System.out.println("Restore Completed!");

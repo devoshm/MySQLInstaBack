@@ -22,12 +22,12 @@ class CassandraPushOrPop
 
     private static String getCassandraInsert(Map<String, Object> queryData)
     {
-        Long timeStamp = (Long) queryData.get(IBConstants.TIMESTAMP);
+        //Long timeStamp = (Long) queryData.get(IBConstants.TIMESTAMP);
         Long timeTaken = (Long) queryData.get(IBConstants.TIME_TAKEN);
         String dbName = (String) queryData.get(IBConstants.DATABASE);
         String query = (String) queryData.get(IBConstants.QUERY);
 
-        String insertQuery = String.format(CASSANDRA_INSERT, timeStamp, timeTaken, dbName, query);
+        String insertQuery = String.format(CASSANDRA_INSERT, System.currentTimeMillis(), timeTaken, dbName, query);
         System.out.println(insertQuery);
         return insertQuery;
     }
@@ -54,7 +54,7 @@ class CassandraPushOrPop
                 }
                 cassandraConnect.execute(query.toString());
                 cassandraConnect.setSession(cassandraConnect.getCluster().connect(keySpace));
-                cassandraConnect.execute("CREATE TABLE CommandHistory (UID UUID PRIMARY KEY, Timestamp TIMESTAMP, ExecutionTime BIGINT, SchemaName VARCHAR, Query VARCHAR);");
+                cassandraConnect.execute("CREATE TABLE CommandHistory (UID UUID PRIMARY KEY, Timestamp BIGINT, ExecutionTime BIGINT, SchemaName VARCHAR, Query VARCHAR);");
                 System.out.println("Keyspace and Table created successfully!");
             }
             else

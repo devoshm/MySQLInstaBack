@@ -18,4 +18,6 @@ public interface IBConstants
 
     String MY_SQL = "MySQL";
     String CASSANDRA = "Cassandra";
+
+    String RESTORE_DELIMITER = ";-;";
 }
