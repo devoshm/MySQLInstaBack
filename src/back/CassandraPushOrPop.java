@@ -8,8 +8,8 @@ import java.util.Map;
 
 class CassandraPushOrPop
 {
-    private static String CASSANDRA_INSERT = "INSERT INTO CommandHistory (UID, Timestamp, ExecutionTime, SchemaName, Query) VALUES (NOW(), %s, %s, '%s', $$%s$$);";
-    private static String CASSANDRA_GET = "SELECT * FROM CommandHistory WHERE Timestamp <= %s %sallow filtering;";
+    private static String CASSANDRA_INSERT = "INSERT INTO CommandHistory (PartKey, Timestamp, ExecutionTime, SchemaName, Query) VALUES (1, %s, %s, '%s', $$%s$$);";
+    private static String CASSANDRA_GET = "SELECT * FROM CommandHistory WHERE PartKey = 1 and Timestamp <= %s%s;";
 
     private CassandraConnect cassandraConnect = new CassandraConnect();
     private String keySpace;
@@ -54,7 +54,7 @@ class CassandraPushOrPop
                 }
                 cassandraConnect.execute(query.toString());
                 cassandraConnect.setSession(cassandraConnect.getCluster().connect(keySpace));
-                cassandraConnect.execute("CREATE TABLE CommandHistory (UID UUID PRIMARY KEY, Timestamp BIGINT, ExecutionTime BIGINT, SchemaName VARCHAR, Query VARCHAR);");
+                cassandraConnect.execute("CREATE TABLE CommandHistory (PartKey INT, Timestamp BIGINT, ExecutionTime BIGINT, SchemaName VARCHAR, Query VARCHAR, PRIMARY KEY (PartKey, Timestamp)) WITH CLUSTERING ORDER BY (Timestamp ASC);");
                 System.out.println("Keyspace and Table created successfully!");
             }
             else
@@ -88,7 +88,7 @@ class CassandraPushOrPop
         StringBuilder stringBuilder = new StringBuilder();
         if (dbNames.length > 0)
         {
-            stringBuilder.append("and (");
+            stringBuilder.append(" and (");
             for (String schema : dbNames)
             {
                 stringBuilder.append("SchemaName = '");
